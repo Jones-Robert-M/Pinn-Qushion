@@ -13,10 +13,10 @@ class InfiniteSquareWell(Potential):
 
     Args:
         width: Total width of the well (centered at x=0)
-        v_max: Large value representing "infinity" (default: 1e10)
+        v_max: Large value representing "infinity" (default: 100.0)
     """
 
-    def __init__(self, width: float = 4.0, v_max: float = 1e10):
+    def __init__(self, width: float = 4.0, v_max: float = 100.0):
         self.width = width
         self.v_max = v_max
 
