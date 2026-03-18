@@ -29,8 +29,8 @@ class Trainer:
         model: PINN,
         optimizer: optax.GradientTransformation,
         sigma: float = 1.0,
-        lambda_phys: float = 1.0,
-        lambda_ic: float = 10.0,
+        lambda_phys: float = 10.0,
+        lambda_ic: float = 100.0,
         lambda_bc: float = 10.0,
     ):
         self.model = model

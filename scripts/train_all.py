@@ -110,9 +110,9 @@ def train_model(
     batch_size_ic: int = 2000,
     batch_size_bc: int = 2000,
     learning_rate: float = 1e-3,
-    lambda_phys: float = 1.0,
+    lambda_phys: float = 10.0,
     lambda_ic: float = 100.0,
-    lambda_bc: float = 100.0,
+    lambda_bc: float = 10.0,
     checkpoint_every: int = 10000,
     log_every: int = 100,
     seed: int = 42,
@@ -290,7 +290,7 @@ def main():
     parser.add_argument(
         "--lambda-phys",
         type=float,
-        default=1.0,
+        default=10.0,
         help="Weight for physics loss",
     )
     parser.add_argument(
@@ -302,7 +302,7 @@ def main():
     parser.add_argument(
         "--lambda-bc",
         type=float,
-        default=100.0,
+        default=10.0,
         help="Weight for boundary condition loss",
     )
     parser.add_argument(

@@ -25,8 +25,8 @@ class PINNLoss:
     def __init__(
         self,
         sigma: float = 1.0,
-        lambda_phys: float = 1.0,
-        lambda_ic: float = 10.0,
+        lambda_phys: float = 10.0,
+        lambda_ic: float = 100.0,
         lambda_bc: float = 10.0,
     ):
         self.sigma = sigma
@@ -37,14 +37,18 @@ class PINNLoss:
     def initial_wavepacket(
         self, x: jnp.ndarray, x0: jnp.ndarray, k0: jnp.ndarray
     ) -> tuple:
-        """Compute initial Gaussian wavepacket.
+        """Compute normalized initial Gaussian wavepacket.
 
-        Psi_0(x) = exp(-(x-x0)^2/(4*sigma^2)) * exp(i*k0*x)
+        Psi_0(x) = N * exp(-(x-x0)^2/(4*sigma^2)) * exp(i*k0*x)
+
+        where N = (1/(2*pi*sigma^2))^(1/4) is the normalization factor.
 
         Returns:
             Tuple of (psi_real, psi_imag)
         """
-        envelope = jnp.exp(-((x - x0) ** 2) / (4 * self.sigma**2))
+        # Normalization factor for Gaussian wavepacket
+        norm = (1.0 / (2 * jnp.pi * self.sigma**2)) ** 0.25
+        envelope = norm * jnp.exp(-((x - x0) ** 2) / (4 * self.sigma**2))
         phase = k0 * x
         psi_r = envelope * jnp.cos(phase)
         psi_i = envelope * jnp.sin(phase)
