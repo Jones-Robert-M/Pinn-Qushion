@@ -108,11 +108,11 @@ pytest tests/
 - Built with JAX and Equinox for JIT compilation
 
 **Training**
-- Physics residual loss (Schrodinger equation)
-- Initial condition loss (Gaussian wavepacket)
-- Boundary condition loss (Dirichlet)
+- Physics residual loss (Schrodinger equation), weight: 10.0
+- Initial condition loss (normalized Gaussian wavepacket), weight: 100.0
+- Boundary condition loss (Dirichlet), weight: 10.0
 - Adam optimizer with cosine learning rate decay
-- Gradient clipping for numerical stability
+- Gradient clipping (global norm 1.0) for numerical stability
 
 **Domain**
 - Spatial: x in [-10, 10]
