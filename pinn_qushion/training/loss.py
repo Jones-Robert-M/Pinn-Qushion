@@ -25,14 +25,16 @@ class PINNLoss:
     def __init__(
         self,
         sigma: float = 1.0,
-        lambda_phys: float = 10.0,
-        lambda_ic: float = 100.0,
-        lambda_bc: float = 10.0,
+        lambda_phys: float = 1.0,
+        lambda_ic: float = 10.0,
+        lambda_bc: float = 0.0,
+        lambda_norm: float = 1.0,
     ):
         self.sigma = sigma
         self.lambda_phys = lambda_phys
         self.lambda_ic = lambda_ic
         self.lambda_bc = lambda_bc
+        self.lambda_norm = lambda_norm
 
     def initial_wavepacket(
         self, x: jnp.ndarray, x0: jnp.ndarray, k0: jnp.ndarray
@@ -105,6 +107,25 @@ class PINNLoss:
         psi_r, psi_i = model.psi(x, t, x0, k0)
         return jnp.mean(psi_r**2 + psi_i**2)
 
+    def normalization_loss(
+        self,
+        model: PINN,
+        x: jnp.ndarray,
+        t: jnp.ndarray,
+        x0: jnp.ndarray,
+        k0: jnp.ndarray,
+        dx: float = 0.078125,  # 20/256 grid spacing
+    ) -> jnp.ndarray:
+        """Compute normalization loss - penalize deviation from unit norm.
+
+        The wavefunction should satisfy integral |Psi|^2 dx = 1 at all times.
+        """
+        psi_r, psi_i = model.psi(x, t, x0, k0)
+        prob = psi_r**2 + psi_i**2
+        # Approximate integral using trapezoidal rule
+        norm = jnp.sum(prob) * dx
+        return (norm - 1.0) ** 2
+
     def total_loss(
         self,
         model: PINN,
@@ -120,10 +141,21 @@ class PINNLoss:
         t_bc: jnp.ndarray,
         x0_bc: jnp.ndarray,
         k0_bc: jnp.ndarray,
+        x_norm: jnp.ndarray = None,
+        t_norm: jnp.ndarray = None,
+        x0_norm: jnp.ndarray = None,
+        k0_norm: jnp.ndarray = None,
     ) -> jnp.ndarray:
         """Compute total weighted loss."""
         l_phys = self.physics_loss(model, x_int, t_int, x0_int, k0_int)
         l_ic = self.initial_condition_loss(model, x_ic, t_ic, x0_ic, k0_ic)
         l_bc = self.boundary_condition_loss(model, x_bc, t_bc, x0_bc, k0_bc)
 
-        return self.lambda_phys * l_phys + self.lambda_ic * l_ic + self.lambda_bc * l_bc
+        total = self.lambda_phys * l_phys + self.lambda_ic * l_ic + self.lambda_bc * l_bc
+
+        # Add normalization loss if points provided
+        if x_norm is not None and self.lambda_norm > 0:
+            l_norm = self.normalization_loss(model, x_norm, t_norm, x0_norm, k0_norm)
+            total = total + self.lambda_norm * l_norm
+
+        return total

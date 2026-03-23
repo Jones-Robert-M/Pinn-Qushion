@@ -109,10 +109,12 @@ def train_model(
     batch_size_interior: int = 10000,
     batch_size_ic: int = 2000,
     batch_size_bc: int = 2000,
+    batch_size_norm: int = 256,
     learning_rate: float = 1e-3,
-    lambda_phys: float = 10.0,
-    lambda_ic: float = 100.0,
-    lambda_bc: float = 10.0,
+    lambda_phys: float = 1.0,
+    lambda_ic: float = 10.0,
+    lambda_bc: float = 0.0,
+    lambda_norm: float = 10.0,
     checkpoint_every: int = 10000,
     log_every: int = 100,
     seed: int = 42,
@@ -122,7 +124,7 @@ def train_model(
     print(f"Training: {potential_name}")
     print(f"{'='*60}")
     print(f"  Iterations: {n_iterations:,}")
-    print(f"  Lambda weights: phys={lambda_phys}, ic={lambda_ic}, bc={lambda_bc}")
+    print(f"  Lambda weights: phys={lambda_phys}, ic={lambda_ic}, bc={lambda_bc}, norm={lambda_norm}")
     print(f"  Learning rate: {learning_rate}")
 
     config = POTENTIAL_CONFIGS[potential_name]
@@ -148,24 +150,6 @@ def train_model(
         optax.adam(schedule),
     )
 
-    # Trainer with adjusted loss weights
-    trainer = Trainer(
-        model=model,
-        optimizer=optimizer,
-        sigma=1.0,
-        lambda_phys=lambda_phys,
-        lambda_ic=lambda_ic,
-        lambda_bc=lambda_bc,
-    )
-
-    # Loss function for computing individual components
-    loss_fn = PINNLoss(
-        sigma=1.0,
-        lambda_phys=lambda_phys,
-        lambda_ic=lambda_ic,
-        lambda_bc=lambda_bc,
-    )
-
     # Sampler with potential-aware domain
     # For infinite square well, sample only inside the well and put BC at walls
     if potential_name == "infinite_square_well":
@@ -176,6 +160,27 @@ def train_model(
     else:
         x_range = (-10, 10)
         x0_range = (-5, 5)
+
+    # Loss function for computing individual components
+    loss_fn = PINNLoss(
+        sigma=1.0,
+        lambda_phys=lambda_phys,
+        lambda_ic=lambda_ic,
+        lambda_bc=lambda_bc,
+        lambda_norm=lambda_norm,
+    )
+
+    # Trainer with adjusted loss weights
+    trainer = Trainer(
+        model=model,
+        optimizer=optimizer,
+        sigma=1.0,
+        lambda_phys=lambda_phys,
+        lambda_ic=lambda_ic,
+        lambda_bc=lambda_bc,
+        lambda_norm=lambda_norm,
+        x_range=x_range,
+    )
 
     sampler = CollocationSampler(
         x_range=x_range,
@@ -195,16 +200,24 @@ def train_model(
 
     for i in tqdm(range(n_iterations), desc=potential_name):
         # Sample batches
-        key, *subkeys = jax.random.split(key, 4)
+        key, *subkeys = jax.random.split(key, 5)
         x_int, t_int, x0_int, k0_int = sampler.sample_interior(subkeys[0], batch_size_interior)
         x_ic, t_ic, x0_ic, k0_ic = sampler.sample_initial(subkeys[1], batch_size_ic)
         x_bc, t_bc, x0_bc, k0_bc = sampler.sample_boundary(subkeys[2], batch_size_bc)
 
-        # Training step
+        # Sample a random time/parameters for normalization constraint
+        t_norm = jax.random.uniform(subkeys[3], minval=0.0, maxval=20.0)
+        x0_norm = jax.random.uniform(subkeys[3], minval=x0_range[0], maxval=x0_range[1])
+        k0_norm = jax.random.uniform(subkeys[3], minval=-3.0, maxval=3.0)
+
+        # Training step with normalization
         loss = trainer.step(
             x_int, t_int, x0_int, k0_int,
             x_ic, t_ic, x0_ic, k0_ic,
             x_bc, t_bc, x0_bc, k0_bc,
+            t_norm=float(t_norm),
+            x0_norm=float(x0_norm),
+            k0_norm=float(k0_norm),
         )
 
         # Log total loss every iteration
@@ -290,20 +303,26 @@ def main():
     parser.add_argument(
         "--lambda-phys",
         type=float,
-        default=10.0,
+        default=1.0,
         help="Weight for physics loss",
     )
     parser.add_argument(
         "--lambda-ic",
         type=float,
-        default=100.0,
+        default=10.0,
         help="Weight for initial condition loss",
     )
     parser.add_argument(
         "--lambda-bc",
         type=float,
-        default=10.0,
+        default=0.0,
         help="Weight for boundary condition loss",
+    )
+    parser.add_argument(
+        "--lambda-norm",
+        type=float,
+        default=10.0,
+        help="Weight for normalization loss",
     )
     parser.add_argument(
         "--learning-rate",
@@ -333,7 +352,7 @@ def main():
     print(f"Log directory: {log_dir}")
     print(f"Potentials: {args.potentials}")
     print(f"Iterations per model: {args.iterations:,}")
-    print(f"Loss weights: λ_phys={args.lambda_phys}, λ_ic={args.lambda_ic}, λ_bc={args.lambda_bc}")
+    print(f"Loss weights: λ_phys={args.lambda_phys}, λ_ic={args.lambda_ic}, λ_bc={args.lambda_bc}, λ_norm={args.lambda_norm}")
     print(f"Learning rate: {args.learning_rate}")
 
     for potential_name in args.potentials:
@@ -350,6 +369,7 @@ def main():
             lambda_phys=args.lambda_phys,
             lambda_ic=args.lambda_ic,
             lambda_bc=args.lambda_bc,
+            lambda_norm=args.lambda_norm,
             seed=args.seed,
         )
 

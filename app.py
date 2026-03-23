@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
-from pinn_qushion.analysis import compute_autocorrelation, extract_spectrum
+from pinn_qushion.analysis import compute_autocorrelation, compute_energy_spectrum
 from pinn_qushion.inference import POTENTIAL_CONFIGS, ModelManager
 
 st.set_page_config(
