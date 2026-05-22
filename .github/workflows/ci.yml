@@ -46,12 +46,101 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          lfs: true
 
-      - name: Push to Hugging Face Spaces
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install huggingface_hub
+        run: pip install "huggingface_hub>=0.20.0"
+
+      - name: Push app code to Hugging Face Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
         run: |
-          git remote add hf https://huggingface.co/spaces/${{ github.repository_owner }}/pinn-qushion
-          git push hf main --force
+          python - <<'EOF'
+          import os
+          from huggingface_hub import HfApi
+
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          space_id = os.environ["HF_SPACE_ID"]
+
+          # Upload app source files (not weights — those are uploaded separately)
+          upload_paths = [
+              "app.py",
+              "requirements.txt",
+              "README.md",
+              "pinn_qushion",
+          ]
+
+          for path in upload_paths:
+              import pathlib
+              p = pathlib.Path(path)
+              if p.is_file():
+                  api.upload_file(
+                      path_or_fileobj=str(p),
+                      path_in_repo=str(p),
+                      repo_id=space_id,
+                      repo_type="space",
+                  )
+                  print(f"Uploaded: {p}")
+              elif p.is_dir():
+                  api.upload_folder(
+                      folder_path=str(p),
+                      path_in_repo=str(p),
+                      repo_id=space_id,
+                      repo_type="space",
+                  )
+                  print(f"Uploaded folder: {p}")
+          EOF
+
+      - name: Upload model weights to Hugging Face Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
+          HF_WEIGHTS_REPO: ${{ secrets.HF_WEIGHTS_REPO }}
+        run: |
+          python - <<'EOF'
+          import os
+          import pathlib
+          from huggingface_hub import HfApi, hf_hub_download
+
+          api = HfApi(token=os.environ["HF_TOKEN"])
+          space_id = os.environ["HF_SPACE_ID"]
+          weights_repo = os.environ.get("HF_WEIGHTS_REPO", "")
+
+          if not weights_repo:
+              print("HF_WEIGHTS_REPO not set — skipping weights upload")
+          else:
+              production_weights = [
+                  "infinite_well.eqx",
+                  "harmonic.eqx",
+                  "finite_well.eqx",
+                  "double_well.eqx",
+                  "gaussian_well.eqx",
+              ]
+              local_weights = pathlib.Path("weights_deploy")
+              local_weights.mkdir(exist_ok=True)
+
+              for fname in production_weights:
+                  try:
+                      local_path = hf_hub_download(
+                          repo_id=weights_repo,
+                          filename=fname,
+                          repo_type="model",
+                          local_dir=str(local_weights),
+                      )
+                      print(f"Downloaded: {fname}")
+                  except Exception as e:
+                      print(f"Skipped {fname}: {e}")
+
+              api.upload_folder(
+                  folder_path=str(local_weights),
+                  path_in_repo="weights",
+                  repo_id=space_id,
+                  repo_type="space",
+              )
+              print("Weights uploaded to Space")
+          EOF
