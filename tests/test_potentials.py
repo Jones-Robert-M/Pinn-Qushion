@@ -59,11 +59,11 @@ class TestInfiniteSquareWell:
         assert jnp.allclose(V, 0.0)
 
     def test_infinite_outside_well(self):
-        """Potential is very large outside the well."""
+        """Potential returns v_max outside the well."""
         well = InfiniteSquareWell(width=4.0)
         x = jnp.array([-3.0, 3.0])
         V = well(x)
-        assert jnp.all(V > 1e6)
+        assert jnp.allclose(V, well.v_max)
 
     def test_name(self):
         """Well has correct name."""
@@ -73,10 +73,8 @@ class TestInfiniteSquareWell:
     def test_width_parameter(self):
         """Width parameter controls well boundaries."""
         well = InfiniteSquareWell(width=2.0)
-        # Inside narrow well
         assert jnp.isclose(well(jnp.array([0.5])), 0.0)
-        # Outside narrow well
-        assert well(jnp.array([1.5])) > 1e6
+        assert jnp.isclose(well(jnp.array([1.5])), well.v_max)
 
 
 class TestFiniteSquareWell:

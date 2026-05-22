@@ -118,6 +118,8 @@ def train_model(
     checkpoint_every: int = 10000,
     log_every: int = 100,
     seed: int = 42,
+    curriculum: bool = True,
+    curriculum_ic_steps: int = 20000,
 ):
     """Train a single PINN model for a given potential with component loss logging."""
     print(f"\n{'='*60}")
@@ -161,16 +163,40 @@ def train_model(
         x_range = (-10, 10)
         x0_range = (-5, 5)
 
-    # Loss function for computing individual components
-    loss_fn = PINNLoss(
-        sigma=1.0,
-        lambda_phys=lambda_phys,
-        lambda_ic=lambda_ic,
-        lambda_bc=lambda_bc,
-        lambda_norm=lambda_norm,
+    sampler = CollocationSampler(
+        x_range=x_range,
+        t_range=(0, 20),
+        x0_range=x0_range,
+        k0_range=(-3, 3),
     )
 
-    # Trainer with adjusted loss weights
+    # Curriculum Phase 1: IC + norm only — nail the initial condition before introducing physics
+    # Phase 2: full loss with physics ramped in
+    ic_steps = curriculum_ic_steps if curriculum else 0
+    phys_steps = n_iterations - ic_steps
+
+    if curriculum:
+        print(f"  Curriculum: {ic_steps:,} IC-only steps, then {phys_steps:,} full-loss steps")
+
+    # Phase 1 trainer: IC + norm only (physics disabled)
+    if curriculum and ic_steps > 0:
+        trainer_ic = Trainer(
+            model=model,
+            optimizer=optax.chain(
+                optax.clip_by_global_norm(1.0),
+                optax.adam(optax.cosine_decay_schedule(learning_rate, ic_steps, alpha=0.1)),
+            ),
+            sigma=1.0,
+            lambda_phys=0.0,
+            lambda_ic=lambda_ic * 10,   # strong IC enforcement
+            lambda_bc=lambda_bc,
+            lambda_norm=lambda_norm * 10,  # strong norm enforcement
+            x_range=x_range,
+        )
+    else:
+        trainer_ic = None
+
+    # Phase 2 trainer: full loss
     trainer = Trainer(
         model=model,
         optimizer=optimizer,
@@ -182,14 +208,15 @@ def train_model(
         x_range=x_range,
     )
 
-    sampler = CollocationSampler(
-        x_range=x_range,
-        t_range=(0, 20),
-        x0_range=x0_range,
-        k0_range=(-3, 3),
+    # Shared loss function for logging component values
+    loss_fn = PINNLoss(
+        sigma=1.0,
+        lambda_phys=lambda_phys,
+        lambda_ic=lambda_ic,
+        lambda_bc=lambda_bc,
+        lambda_norm=lambda_norm,
     )
 
-    # Training loop with component logging
     key = jax.random.PRNGKey(seed + 1)
     loss_history = {
         "total": [],
@@ -198,19 +225,55 @@ def train_model(
         "bc": [],
     }
 
-    for i in tqdm(range(n_iterations), desc=potential_name):
+    # --- Phase 1: IC curriculum ---
+    if trainer_ic is not None:
+        print(f"\n  Phase 1: IC curriculum ({ic_steps:,} steps)")
+        for i in tqdm(range(ic_steps), desc=f"{potential_name} [IC]"):
+            key, *subkeys = jax.random.split(key, 5)
+            x_ic, t_ic, x0_ic, k0_ic = sampler.sample_initial(subkeys[1], batch_size_ic * 5)
+            # dummy interior/bc (unused — lambda_phys=0)
+            x_int, t_int, x0_int, k0_int = sampler.sample_interior(subkeys[0], 100)
+            x_bc, t_bc, x0_bc, k0_bc = sampler.sample_boundary(subkeys[2], 100)
+            t_norm = jax.random.uniform(subkeys[3], minval=0.0, maxval=1.0)
+            x0_norm = jax.random.uniform(subkeys[3], minval=x0_range[0], maxval=x0_range[1])
+            k0_norm = jax.random.uniform(subkeys[3], minval=-3.0, maxval=3.0)
+
+            loss = trainer_ic.step(
+                x_int, t_int, x0_int, k0_int,
+                x_ic, t_ic, x0_ic, k0_ic,
+                x_bc, t_bc, x0_bc, k0_bc,
+                t_norm=float(t_norm),
+                x0_norm=float(x0_norm),
+                k0_norm=float(k0_norm),
+            )
+
+            if (i + 1) % log_every == 0:
+                current_model = trainer_ic.get_model()
+                l_ic = float(loss_fn.initial_condition_loss(current_model, x_ic, t_ic, x0_ic, k0_ic))
+                for _ in range(log_every):
+                    loss_history["total"].append(float(loss))
+                    loss_history["physics"].append(0.0)
+                    loss_history["ic"].append(l_ic)
+                    loss_history["bc"].append(0.0)
+
+        # Hand model off to phase 2 trainer
+        trainer.model = trainer_ic.get_model()
+        trainer.opt_state = trainer.optimizer.init(eqx.filter(trainer.model, eqx.is_array))
+        print(f"  Phase 1 complete. Handing model to phase 2.")
+
+    # --- Phase 2: full loss ---
+    print(f"\n  Phase 2: Full loss ({phys_steps:,} steps)")
+    for i in tqdm(range(phys_steps), desc=f"{potential_name} [full]"):
         # Sample batches
         key, *subkeys = jax.random.split(key, 5)
         x_int, t_int, x0_int, k0_int = sampler.sample_interior(subkeys[0], batch_size_interior)
         x_ic, t_ic, x0_ic, k0_ic = sampler.sample_initial(subkeys[1], batch_size_ic)
         x_bc, t_bc, x0_bc, k0_bc = sampler.sample_boundary(subkeys[2], batch_size_bc)
 
-        # Sample a random time/parameters for normalization constraint
         t_norm = jax.random.uniform(subkeys[3], minval=0.0, maxval=20.0)
         x0_norm = jax.random.uniform(subkeys[3], minval=x0_range[0], maxval=x0_range[1])
         k0_norm = jax.random.uniform(subkeys[3], minval=-3.0, maxval=3.0)
 
-        # Training step with normalization
         loss = trainer.step(
             x_int, t_int, x0_int, k0_int,
             x_ic, t_ic, x0_ic, k0_ic,
@@ -229,22 +292,21 @@ def train_model(
             l_phys = float(loss_fn.physics_loss(current_model, x_int, t_int, x0_int, k0_int))
             l_ic = float(loss_fn.initial_condition_loss(current_model, x_ic, t_ic, x0_ic, k0_ic))
             l_bc = float(loss_fn.boundary_condition_loss(current_model, x_bc, t_bc, x0_bc, k0_bc))
-
-            # Extend component losses to match total loss length
             for _ in range(log_every):
                 loss_history["physics"].append(l_phys)
                 loss_history["ic"].append(l_ic)
                 loss_history["bc"].append(l_bc)
 
-        # Checkpoint
-        if (i + 1) % checkpoint_every == 0:
-            checkpoint_path = output_dir / f"{potential_name}_checkpoint_{i+1}.eqx"
+        # Checkpoint (offset by IC steps so filenames reflect total training progress)
+        global_step = ic_steps + i + 1
+        if global_step % checkpoint_every == 0:
+            checkpoint_path = output_dir / f"{potential_name}_checkpoint_{global_step}.eqx"
             eqx.tree_serialise_leaves(checkpoint_path, trainer.get_model())
             avg_loss = sum(loss_history["total"][-checkpoint_every:]) / checkpoint_every
             avg_phys = sum(loss_history["physics"][-checkpoint_every:]) / checkpoint_every
             avg_ic = sum(loss_history["ic"][-checkpoint_every:]) / checkpoint_every
             avg_bc = sum(loss_history["bc"][-checkpoint_every:]) / checkpoint_every
-            print(f"\n  Iter {i+1}: Total={avg_loss:.6f} | Phys={avg_phys:.6f} | IC={avg_ic:.6f} | BC={avg_bc:.6f}")
+            print(f"\n  Step {global_step}: Total={avg_loss:.6f} | Phys={avg_phys:.6f} | IC={avg_ic:.6f} | BC={avg_bc:.6f}")
 
     # Save final model
     final_path = output_dir / config["weight_file"]
@@ -336,6 +398,18 @@ def main():
         default=42,
         help="Random seed",
     )
+    parser.add_argument(
+        "--no-curriculum",
+        action="store_true",
+        default=False,
+        help="Disable curriculum training (train with full loss from step 0)",
+    )
+    parser.add_argument(
+        "--curriculum-ic-steps",
+        type=int,
+        default=20000,
+        help="Number of IC-only steps in curriculum phase 1",
+    )
 
     args = parser.parse_args()
 
@@ -371,6 +445,8 @@ def main():
             lambda_bc=args.lambda_bc,
             lambda_norm=args.lambda_norm,
             seed=args.seed,
+            curriculum=not args.no_curriculum,
+            curriculum_ic_steps=args.curriculum_ic_steps,
         )
 
     print("\n" + "=" * 60)
