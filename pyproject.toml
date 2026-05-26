@@ -5,17 +5,20 @@ description = "PINN solver for 1D Schrödinger equation with web visualization"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
-authors = [{name = "Your Name"}]
+authors = [{name = "Robert Jones", email = "jonesrobm@gmail.com"}]
+
+[project.urls]
+Homepage = "https://github.com/Jones-Robert-M/pinn-qushion"
 
 dependencies = [
     "jax>=0.4.20",
-    "jaxlib>=0.4.20",
     "equinox>=0.11.0",
     "optax>=0.1.7",
     "numpy>=1.24.0",
     "scipy>=1.11.0",
     "streamlit>=1.28.0",
     "plotly>=5.18.0",
+    "huggingface_hub>=0.20.0",
 ]
 
 [project.optional-dependencies]

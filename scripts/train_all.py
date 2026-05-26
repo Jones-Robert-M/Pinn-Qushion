@@ -18,12 +18,13 @@ from pinn_qushion.models import PINN
 from pinn_qushion.training import CollocationSampler, PINNLoss, Trainer
 
 
-def plot_loss_curves(loss_history: dict, output_path: Path, potential_name: str):
+def plot_loss_curves(loss_history: dict, output_path: Path, potential_name: str, log_every: int = 100):
     """Generate and save loss curve plots."""
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     fig.suptitle(f"Training Curves: {potential_name.replace('_', ' ').title()}", fontsize=14)
 
-    iterations = np.arange(1, len(loss_history["total"]) + 1)
+    n_logged = len(loss_history["total"])
+    iterations = np.arange(1, n_logged + 1) * log_every
 
     # 1. Total loss (log scale)
     ax1 = axes[0, 0]
@@ -39,11 +40,23 @@ def plot_loss_curves(loss_history: dict, output_path: Path, potential_name: str)
     ax1.grid(True, alpha=0.3)
     ax1.legend()
 
-    # 2. Component losses (log scale)
+    # 2. Component losses (log scale) — shade phase boundary if curriculum used
     ax2 = axes[0, 1]
-    ax2.semilogy(iterations, loss_history["physics"], 'r-', alpha=0.5, linewidth=0.5, label='Physics')
+    if "phase" in loss_history and loss_history["phase"]:
+        phases = np.array(loss_history["phase"])
+        phase2_start = int(np.argmax(phases == 2)) if 2 in phases else 0
+        if phase2_start > 0:
+            ax2.axvline(phase2_start, color='gray', linestyle='--', linewidth=1, alpha=0.7, label='Phase 2 start')
+    phys = np.array(loss_history["physics"])
+    # Avoid semilogy with zeros (phase 1 has phys=0)
+    phys_safe = np.where(phys > 0, phys, np.nan)
+    norm_arr = np.array(loss_history.get("norm", []))
+    norm_safe = np.where(norm_arr > 0, norm_arr, np.nan) if len(norm_arr) else None
+    ax2.semilogy(iterations, phys_safe, 'r-', alpha=0.5, linewidth=0.5, label='Physics')
     ax2.semilogy(iterations, loss_history["ic"], 'g-', alpha=0.5, linewidth=0.5, label='IC')
     ax2.semilogy(iterations, loss_history["bc"], 'b-', alpha=0.5, linewidth=0.5, label='BC')
+    if norm_safe is not None:
+        ax2.semilogy(iterations, norm_safe, 'm-', alpha=0.5, linewidth=0.5, label='Norm')
     ax2.set_xlabel("Iteration")
     ax2.set_ylabel("Loss Component")
     ax2.set_title("Loss Components (log scale)")
@@ -120,6 +133,8 @@ def train_model(
     seed: int = 42,
     curriculum: bool = True,
     curriculum_ic_steps: int = 20000,
+    warm_start: str = None,
+    norm_late_times: list = None,
 ):
     """Train a single PINN model for a given potential with component loss logging."""
     print(f"\n{'='*60}")
@@ -140,6 +155,12 @@ def train_model(
         num_layers=5,
         key=key,
     )
+
+    if warm_start:
+        model = eqx.tree_deserialise_leaves(warm_start, model)
+        print(f"  Warm start from: {warm_start}")
+        # Skip IC curriculum — weights are already trained
+        curriculum = False
 
     # Optimizer with cosine decay and gradient clipping
     schedule = optax.cosine_decay_schedule(
@@ -223,6 +244,8 @@ def train_model(
         "physics": [],
         "ic": [],
         "bc": [],
+        "norm": [],
+        "phase": [],   # 1 = IC curriculum, 2 = full loss
     }
 
     # --- Phase 1: IC curriculum ---
@@ -250,11 +273,19 @@ def train_model(
             if (i + 1) % log_every == 0:
                 current_model = trainer_ic.get_model()
                 l_ic = float(loss_fn.initial_condition_loss(current_model, x_ic, t_ic, x0_ic, k0_ic))
-                for _ in range(log_every):
-                    loss_history["total"].append(float(loss))
-                    loss_history["physics"].append(0.0)
-                    loss_history["ic"].append(l_ic)
-                    loss_history["bc"].append(0.0)
+                x_ng = trainer_ic.x_norm_grid
+                n_ng = len(x_ng)
+                l_norm = float(loss_fn.normalization_loss(
+                    current_model,
+                    x_ng, jnp.zeros(n_ng),
+                    jnp.full(n_ng, float(x0_norm)), jnp.full(n_ng, float(k0_norm)),
+                ))
+                loss_history["total"].append(float(loss))
+                loss_history["physics"].append(0.0)
+                loss_history["ic"].append(l_ic)
+                loss_history["bc"].append(0.0)
+                loss_history["norm"].append(l_norm)
+                loss_history["phase"].append(1)
 
         # Hand model off to phase 2 trainer
         trainer.model = trainer_ic.get_model()
@@ -270,10 +301,14 @@ def train_model(
         x_ic, t_ic, x0_ic, k0_ic = sampler.sample_initial(subkeys[1], batch_size_ic)
         x_bc, t_bc, x0_bc, k0_bc = sampler.sample_boundary(subkeys[2], batch_size_bc)
 
-        t_norm = jax.random.uniform(subkeys[3], minval=0.0, maxval=20.0)
+        # Sample t_norm from exponential distribution so norm is enforced
+        # most strongly at small t where decay begins — mean = t_max/5
+        t_norm_raw = jax.random.exponential(subkeys[3]) * (20.0 / 5.0)
+        t_norm = jnp.clip(t_norm_raw, 0.0, 20.0)
         x0_norm = jax.random.uniform(subkeys[3], minval=x0_range[0], maxval=x0_range[1])
         k0_norm = jax.random.uniform(subkeys[3], minval=-3.0, maxval=3.0)
 
+        extra_times = list(norm_late_times) if norm_late_times else [0.0, 10.0]
         loss = trainer.step(
             x_int, t_int, x0_int, k0_int,
             x_ic, t_ic, x0_ic, k0_ic,
@@ -281,32 +316,41 @@ def train_model(
             t_norm=float(t_norm),
             x0_norm=float(x0_norm),
             k0_norm=float(k0_norm),
+            extra_norm_times=extra_times,
         )
 
-        # Log total loss every iteration
-        loss_history["total"].append(float(loss))
-
-        # Log component losses periodically (expensive to compute)
+        # Log all losses periodically (keep lists the same length)
         if (i + 1) % log_every == 0:
             current_model = trainer.get_model()
             l_phys = float(loss_fn.physics_loss(current_model, x_int, t_int, x0_int, k0_int))
             l_ic = float(loss_fn.initial_condition_loss(current_model, x_ic, t_ic, x0_ic, k0_ic))
             l_bc = float(loss_fn.boundary_condition_loss(current_model, x_bc, t_bc, x0_bc, k0_bc))
-            for _ in range(log_every):
-                loss_history["physics"].append(l_phys)
-                loss_history["ic"].append(l_ic)
-                loss_history["bc"].append(l_bc)
+            x_ng = trainer.x_norm_grid
+            n_ng = len(x_ng)
+            l_norm = float(loss_fn.normalization_loss(
+                current_model,
+                x_ng, jnp.zeros(n_ng),
+                jnp.full(n_ng, float(x0_norm)), jnp.full(n_ng, float(k0_norm)),
+            ))
+            loss_history["total"].append(float(loss))
+            loss_history["physics"].append(l_phys)
+            loss_history["ic"].append(l_ic)
+            loss_history["bc"].append(l_bc)
+            loss_history["norm"].append(l_norm)
+            loss_history["phase"].append(2)
 
         # Checkpoint (offset by IC steps so filenames reflect total training progress)
         global_step = ic_steps + i + 1
         if global_step % checkpoint_every == 0:
             checkpoint_path = output_dir / f"{potential_name}_checkpoint_{global_step}.eqx"
             eqx.tree_serialise_leaves(checkpoint_path, trainer.get_model())
-            avg_loss = sum(loss_history["total"][-checkpoint_every:]) / checkpoint_every
-            avg_phys = sum(loss_history["physics"][-checkpoint_every:]) / checkpoint_every
-            avg_ic = sum(loss_history["ic"][-checkpoint_every:]) / checkpoint_every
-            avg_bc = sum(loss_history["bc"][-checkpoint_every:]) / checkpoint_every
-            print(f"\n  Step {global_step}: Total={avg_loss:.6f} | Phys={avg_phys:.6f} | IC={avg_ic:.6f} | BC={avg_bc:.6f}")
+            window = checkpoint_every // log_every
+            avg_loss = np.mean(loss_history["total"][-window:])
+            avg_phys = np.mean(loss_history["physics"][-window:])
+            avg_ic = np.mean(loss_history["ic"][-window:])
+            avg_bc = np.mean(loss_history["bc"][-window:])
+            avg_norm = np.mean(loss_history["norm"][-window:])
+            print(f"\n  Step {global_step}: Total={avg_loss:.6f} | Phys={avg_phys:.6f} | IC={avg_ic:.6f} | BC={avg_bc:.6f} | Norm={avg_norm:.6f}")
 
     # Save final model
     final_path = output_dir / config["weight_file"]
@@ -322,14 +366,18 @@ def train_model(
             "lambda_phys": lambda_phys,
             "lambda_ic": lambda_ic,
             "lambda_bc": lambda_bc,
+            "lambda_norm": lambda_norm,
             "learning_rate": learning_rate,
+            "curriculum": curriculum,
+            "curriculum_ic_steps": curriculum_ic_steps if curriculum else 0,
+            "log_every": log_every,
             "losses": loss_history,
         }, f)
     print(f"  Loss history saved to: {loss_json_path}")
 
     # Generate and save loss curve plots
     plot_path = log_dir / f"{potential_name}_loss_curves.png"
-    plot_loss_curves(loss_history, plot_path, potential_name)
+    plot_loss_curves(loss_history, plot_path, potential_name, log_every=log_every)
     print(f"  Loss curves saved to: {plot_path}")
 
     return loss_history
@@ -410,6 +458,19 @@ def main():
         default=20000,
         help="Number of IC-only steps in curriculum phase 1",
     )
+    parser.add_argument(
+        "--warm-start",
+        type=str,
+        default=None,
+        help="Path to .eqx weights file to warm-start from (skips phase 1)",
+    )
+    parser.add_argument(
+        "--norm-late-times",
+        type=float,
+        nargs="+",
+        default=None,
+        help="Fixed late times at which to evaluate norm loss every step (e.g. 0 5 10 20)",
+    )
 
     args = parser.parse_args()
 
@@ -447,6 +508,8 @@ def main():
             seed=args.seed,
             curriculum=not args.no_curriculum,
             curriculum_ic_steps=args.curriculum_ic_steps,
+            warm_start=args.warm_start,
+            norm_late_times=args.norm_late_times,
         )
 
     print("\n" + "=" * 60)

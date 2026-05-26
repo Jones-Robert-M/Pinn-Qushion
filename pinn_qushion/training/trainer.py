@@ -135,17 +135,29 @@ class Trainer:
         t_norm: float = None,
         x0_norm: float = None,
         k0_norm: float = None,
+        extra_norm_times: list = None,
     ) -> jnp.ndarray:
         """Perform one training step and return loss.
 
-        If t_norm, x0_norm, k0_norm are provided, normalization loss is computed.
+        extra_norm_times: additional t values at which to evaluate norm loss,
+        averaged together with the primary t_norm evaluation.
         """
-        # Use the pre-computed normalization grid
         if t_norm is not None:
             x_norm = self.x_norm_grid
             t_norm_arr = jnp.full(256, t_norm)
             x0_norm_arr = jnp.full(256, x0_norm)
             k0_norm_arr = jnp.full(256, k0_norm)
+
+            # If extra times provided, stack them as a tiled spatial grid
+            if extra_norm_times:
+                extra_x = jnp.concatenate([self.x_norm_grid] * len(extra_norm_times))
+                extra_t = jnp.concatenate([jnp.full(256, t) for t in extra_norm_times])
+                extra_x0 = jnp.full(len(extra_x), x0_norm)
+                extra_k0 = jnp.full(len(extra_x), k0_norm)
+                x_norm = jnp.concatenate([x_norm, extra_x])
+                t_norm_arr = jnp.concatenate([t_norm_arr, extra_t])
+                x0_norm_arr = jnp.concatenate([x0_norm_arr, extra_x0])
+                k0_norm_arr = jnp.concatenate([k0_norm_arr, extra_k0])
         else:
             x_norm = None
             t_norm_arr = None
