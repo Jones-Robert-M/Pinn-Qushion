@@ -87,8 +87,10 @@ class PINN(eqx.Module):
         self, x: jnp.ndarray, t: jnp.ndarray, x0: jnp.ndarray, k0: jnp.ndarray
     ) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """Compute d(Psi)/dt."""
-        grad_fn = jax.grad(lambda x_, t_, x0_, k0_: self._psi_scalar(x_, t_, x0_, k0_)[0], argnums=1)
-        grad_fn_i = jax.grad(lambda x_, t_, x0_, k0_: self._psi_scalar(x_, t_, x0_, k0_)[1], argnums=1)
+        def _r(x_, t_, x0_, k0_): return self._psi_scalar(x_, t_, x0_, k0_)[0]  # noqa: E731
+        def _i(x_, t_, x0_, k0_): return self._psi_scalar(x_, t_, x0_, k0_)[1]  # noqa: E731
+        grad_fn = jax.grad(_r, argnums=1)
+        grad_fn_i = jax.grad(_i, argnums=1)
 
         dpsi_r_dt = jax.vmap(grad_fn)(x, t, x0, k0)
         dpsi_i_dt = jax.vmap(grad_fn_i)(x, t, x0, k0)

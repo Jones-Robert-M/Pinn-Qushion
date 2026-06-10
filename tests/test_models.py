@@ -2,7 +2,6 @@
 
 import jax
 import jax.numpy as jnp
-import pytest
 
 from pinn_qushion.models.complex_mlp import ComplexMLP
 from pinn_qushion.models.pinn import PINN

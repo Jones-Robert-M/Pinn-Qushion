@@ -12,7 +12,6 @@ import argparse
 import os
 from pathlib import Path
 
-
 PRODUCTION_WEIGHTS = [
     "infinite_well.eqx",
     "harmonic.eqx",
@@ -24,7 +23,7 @@ PRODUCTION_WEIGHTS = [
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--repo", required=True, help="HF repo id, e.g. username/pinn-qushion-weights")
+    parser.add_argument("--repo", required=True, help="HF repo id, e.g. username/pinn-qushion-weights")  # noqa: E501
     parser.add_argument("--weights-dir", default="weights", help="Local weights directory")
     parser.add_argument("--token", default=None, help="HF token (falls back to HF_TOKEN env var)")
     args = parser.parse_args()

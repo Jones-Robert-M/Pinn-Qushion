@@ -18,7 +18,7 @@ def evaluate_model(manager: ModelManager, potential_name: str, output_dir: Path)
 
     model = manager.get_model(potential_name)
     if model is None:
-        print(f"  Model weights not found, skipping")
+        print("  Model weights not found, skipping")
         return
 
     config = POTENTIAL_CONFIGS[potential_name]

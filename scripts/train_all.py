@@ -18,7 +18,9 @@ from pinn_qushion.models import PINN
 from pinn_qushion.training import CollocationSampler, PINNLoss, Trainer
 
 
-def plot_loss_curves(loss_history: dict, output_path: Path, potential_name: str, log_every: int = 100):
+def plot_loss_curves(
+    loss_history: dict, output_path: Path, potential_name: str, log_every: int = 100
+):
     """Generate and save loss curve plots."""
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     fig.suptitle(f"Training Curves: {potential_name.replace('_', ' ').title()}", fontsize=14)
@@ -33,7 +35,8 @@ def plot_loss_curves(loss_history: dict, output_path: Path, potential_name: str,
     window = min(1000, len(iterations) // 10)
     if window > 1:
         smoothed = np.convolve(loss_history["total"], np.ones(window)/window, mode='valid')
-        ax1.semilogy(np.arange(window//2, len(iterations) - window//2 + 1), smoothed, 'b-', linewidth=2, label='Smoothed')
+        x_smooth = np.arange(window // 2, len(iterations) - window // 2 + 1)
+        ax1.semilogy(x_smooth, smoothed, 'b-', linewidth=2, label='Smoothed')
     ax1.set_xlabel("Iteration")
     ax1.set_ylabel("Total Loss")
     ax1.set_title("Total Loss (log scale)")
@@ -46,7 +49,10 @@ def plot_loss_curves(loss_history: dict, output_path: Path, potential_name: str,
         phases = np.array(loss_history["phase"])
         phase2_start = int(np.argmax(phases == 2)) if 2 in phases else 0
         if phase2_start > 0:
-            ax2.axvline(phase2_start, color='gray', linestyle='--', linewidth=1, alpha=0.7, label='Phase 2 start')
+            ax2.axvline(
+                phase2_start, color='gray', linestyle='--',
+                linewidth=1, alpha=0.7, label='Phase 2 start'
+            )
     phys = np.array(loss_history["physics"])
     # Avoid semilogy with zeros (phase 1 has phys=0)
     phys_safe = np.where(phys > 0, phys, np.nan)
@@ -105,7 +111,7 @@ Improvement Ratio (initial/final):
   Physics: {np.mean(loss_history['physics'][:100]) / (np.mean(loss_history['physics'][-1000:]) + 1e-10):.1f}x
   IC:      {np.mean(loss_history['ic'][:100]) / (np.mean(loss_history['ic'][-1000:]) + 1e-10):.1f}x
   BC:      {np.mean(loss_history['bc'][:100]) / (np.mean(loss_history['bc'][-1000:]) + 1e-10):.1f}x
-"""
+"""  # noqa: E501
     ax4.text(0.1, 0.9, stats_text, transform=ax4.transAxes, fontsize=10,
              verticalalignment='top', fontfamily='monospace')
 
@@ -141,7 +147,7 @@ def train_model(
     print(f"Training: {potential_name}")
     print(f"{'='*60}")
     print(f"  Iterations: {n_iterations:,}")
-    print(f"  Lambda weights: phys={lambda_phys}, ic={lambda_ic}, bc={lambda_bc}, norm={lambda_norm}")
+    print(f"  Lambda weights: phys={lambda_phys}, ic={lambda_ic}, bc={lambda_bc}, norm={lambda_norm}")  # noqa: E501
     print(f"  Learning rate: {learning_rate}")
 
     config = POTENTIAL_CONFIGS[potential_name]
@@ -272,12 +278,12 @@ def train_model(
                 t_norm=float(t_norm),
                 x0_norm=float(x0_norm),
                 k0_norm=float(k0_norm),
-                extra_norm_times=list(norm_late_times) if norm_late_times else [0.0, 5.0, 10.0, 20.0],
+                extra_norm_times=list(norm_late_times) if norm_late_times else [0.0, 5.0, 10.0, 20.0],  # noqa: E501
             )
 
             if (i + 1) % log_every == 0:
                 current_model = trainer_ic.get_model()
-                l_ic = float(loss_fn.initial_condition_loss(current_model, x_ic, t_ic, x0_ic, k0_ic))
+                l_ic = float(loss_fn.initial_condition_loss(current_model, x_ic, t_ic, x0_ic, k0_ic))  # noqa: E501
                 x_ng = trainer_ic.x_norm_grid
                 n_ng = len(x_ng)
                 l_norm = float(loss_fn.normalization_loss(
@@ -295,7 +301,7 @@ def train_model(
         # Hand model off to phase 2 trainer
         trainer.model = trainer_ic.get_model()
         trainer.opt_state = trainer.optimizer.init(eqx.filter(trainer.model, eqx.is_array))
-        print(f"  Phase 1 complete. Handing model to phase 2.")
+        print("  Phase 1 complete. Handing model to phase 2.")
 
     # --- Phase 2: full loss ---
     print(f"\n  Phase 2: Full loss ({phys_steps:,} steps)")
@@ -360,7 +366,10 @@ def train_model(
             avg_ic = np.mean(loss_history["ic"][-window:])
             avg_bc = np.mean(loss_history["bc"][-window:])
             avg_norm = np.mean(loss_history["norm"][-window:])
-            print(f"\n  Step {global_step}: Total={avg_loss:.6f} | Phys={avg_phys:.6f} | IC={avg_ic:.6f} | BC={avg_bc:.6f} | Norm={avg_norm:.6f}")
+            print(
+                f"\n  Step {global_step}: Total={avg_loss:.6f} | Phys={avg_phys:.6f}"
+                f" | IC={avg_ic:.6f} | BC={avg_bc:.6f} | Norm={avg_norm:.6f}"
+            )
 
     # Save final model
     final_path = output_dir / config["weight_file"]
@@ -497,7 +506,10 @@ def main():
     print(f"Log directory: {log_dir}")
     print(f"Potentials: {args.potentials}")
     print(f"Iterations per model: {args.iterations:,}")
-    print(f"Loss weights: λ_phys={args.lambda_phys}, λ_ic={args.lambda_ic}, λ_bc={args.lambda_bc}, λ_norm={args.lambda_norm}")
+    print(
+        f"Loss weights: λ_phys={args.lambda_phys}, λ_ic={args.lambda_ic},"
+        f" λ_bc={args.lambda_bc}, λ_norm={args.lambda_norm}"
+    )
     print(f"Learning rate: {args.learning_rate}")
 
     for potential_name in args.potentials:

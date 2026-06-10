@@ -4,10 +4,10 @@ import jax.numpy as jnp
 import pytest
 
 from pinn_qushion.potentials.base import Potential
-from pinn_qushion.potentials.square_well import InfiniteSquareWell, FiniteSquareWell
-from pinn_qushion.potentials.harmonic import HarmonicOscillator
 from pinn_qushion.potentials.double_well import DoubleWell
 from pinn_qushion.potentials.gaussian_well import GaussianWell
+from pinn_qushion.potentials.harmonic import HarmonicOscillator
+from pinn_qushion.potentials.square_well import FiniteSquareWell, InfiniteSquareWell
 
 
 def test_potential_is_abstract():

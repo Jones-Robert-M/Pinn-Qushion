@@ -3,7 +3,6 @@
 import jax
 import jax.numpy as jnp
 import optax
-import pytest
 
 from pinn_qushion.models import PINN
 from pinn_qushion.potentials import HarmonicOscillator

@@ -4,15 +4,17 @@ These tests verify that the trained models produce physically correct results
 by comparing against known analytical solutions.
 """
 
-from pathlib import Path
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from pinn_qushion.analysis import compute_autocorrelation_series, compute_energy_spectrum, find_spectral_peaks
-from pinn_qushion.inference import ModelManager, POTENTIAL_CONFIGS
+from pinn_qushion.analysis import (
+    compute_autocorrelation_series,
+    compute_energy_spectrum,
+    find_spectral_peaks,
+)
+from pinn_qushion.inference import POTENTIAL_CONFIGS, ModelManager
 
 
 @pytest.fixture
@@ -33,7 +35,8 @@ class TestInfiniteSquareWellPhysics:
     )
     def test_energy_levels_proportional_to_n_squared(self, model_manager):
         """Energy levels should follow E_n ∝ n² pattern."""
-        weight_file = model_manager.weights_dir / POTENTIAL_CONFIGS["infinite_square_well"]["weight_file"]
+        cfg = POTENTIAL_CONFIGS["infinite_square_well"]
+        weight_file = model_manager.weights_dir / cfg["weight_file"]
         if not weight_file.exists():
             pytest.skip("Model weights not found")
 
@@ -86,7 +89,8 @@ class TestHarmonicOscillatorPhysics:
 
     def test_equally_spaced_energy_levels(self, model_manager):
         """Harmonic oscillator should have equally spaced energy levels."""
-        weight_file = model_manager.weights_dir / POTENTIAL_CONFIGS["harmonic_oscillator"]["weight_file"]
+        cfg = POTENTIAL_CONFIGS["harmonic_oscillator"]
+        weight_file = model_manager.weights_dir / cfg["weight_file"]
         if not weight_file.exists():
             pytest.skip("Model weights not found")
 

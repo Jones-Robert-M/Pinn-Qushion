@@ -1,8 +1,6 @@
 """Tests for signal processing and spectral analysis."""
 
 import jax.numpy as jnp
-import numpy as np
-import pytest
 
 from pinn_qushion.analysis.autocorrelation import compute_autocorrelation
 from pinn_qushion.analysis.spectrum import compute_energy_spectrum

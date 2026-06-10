@@ -16,7 +16,6 @@ from .potentials import (
     InfiniteSquareWell,
 )
 
-
 POTENTIAL_CONFIGS = {
     "infinite_square_well": {
         "class": InfiniteSquareWell,

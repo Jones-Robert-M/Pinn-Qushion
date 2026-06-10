@@ -3,8 +3,8 @@
 import jax.numpy as jnp
 import numpy as np
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import streamlit as st
+from plotly.subplots import make_subplots
 
 from pinn_qushion.analysis import compute_autocorrelation_series, compute_energy_spectrum
 from pinn_qushion.inference import POTENTIAL_CONFIGS, ModelManager
@@ -128,7 +128,8 @@ def build_animation(data: dict, potential_key: str) -> go.Figure:
     V = data["V"]
 
     V_finite = V[np.isfinite(V)]
-    V_scale = np.max(np.abs(V_finite)) if len(V_finite) > 0 and np.max(np.abs(V_finite)) > 0 else 1.0
+    V_abs_max = np.max(np.abs(V_finite)) if len(V_finite) > 0 else 0.0
+    V_scale = V_abs_max if V_abs_max > 0 else 1.0
     prob_max = float(np.max(prob_frames)) if np.max(prob_frames) > 0 else 1.0
 
     # Scale V to occupy the top 25% of the plot as a subtle background shape.
@@ -161,7 +162,6 @@ def build_animation(data: dict, potential_key: str) -> go.Figure:
         ))
 
     # Slider: only label every 10th step to avoid crowding
-    n_steps = len(t_points)
     slider_steps = []
     for i, t in enumerate(t_points):
         label = f"{t:.0f}" if i % 12 == 0 else " "
