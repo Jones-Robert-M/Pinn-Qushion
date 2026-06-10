@@ -229,6 +229,7 @@ def train_model(
         x_range=x_range,
     )
 
+    dx = (x_range[1] - x_range[0]) / 256
     # Shared loss function for logging component values
     loss_fn = PINNLoss(
         sigma=1.0,
@@ -236,6 +237,7 @@ def train_model(
         lambda_ic=lambda_ic,
         lambda_bc=lambda_bc,
         lambda_norm=lambda_norm,
+        dx=dx,
     )
 
     key = jax.random.PRNGKey(seed + 1)
@@ -252,14 +254,16 @@ def train_model(
     if trainer_ic is not None:
         print(f"\n  Phase 1: IC curriculum ({ic_steps:,} steps)")
         for i in tqdm(range(ic_steps), desc=f"{potential_name} [IC]"):
-            key, *subkeys = jax.random.split(key, 5)
+            key, *subkeys = jax.random.split(key, 7)
             x_ic, t_ic, x0_ic, k0_ic = sampler.sample_initial(subkeys[1], batch_size_ic * 5)
             # dummy interior/bc (unused — lambda_phys=0)
             x_int, t_int, x0_int, k0_int = sampler.sample_interior(subkeys[0], 100)
             x_bc, t_bc, x0_bc, k0_bc = sampler.sample_boundary(subkeys[2], 100)
-            t_norm = jax.random.uniform(subkeys[3], minval=0.0, maxval=1.0)
-            x0_norm = jax.random.uniform(subkeys[3], minval=x0_range[0], maxval=x0_range[1])
-            k0_norm = jax.random.uniform(subkeys[3], minval=-3.0, maxval=3.0)
+            # Independent keys for t_norm, x0_norm, k0_norm — previously all used subkeys[3]
+            # which made them perfectly correlated linear functions of the same variate.
+            t_norm = jax.random.uniform(subkeys[3], minval=0.0, maxval=20.0)
+            x0_norm = jax.random.uniform(subkeys[4], minval=x0_range[0], maxval=x0_range[1])
+            k0_norm = jax.random.uniform(subkeys[5], minval=-3.0, maxval=3.0)
 
             loss = trainer_ic.step(
                 x_int, t_int, x0_int, k0_int,
@@ -268,6 +272,7 @@ def train_model(
                 t_norm=float(t_norm),
                 x0_norm=float(x0_norm),
                 k0_norm=float(k0_norm),
+                extra_norm_times=list(norm_late_times) if norm_late_times else [0.0, 5.0, 10.0, 20.0],
             )
 
             if (i + 1) % log_every == 0:
@@ -301,12 +306,13 @@ def train_model(
         x_ic, t_ic, x0_ic, k0_ic = sampler.sample_initial(subkeys[1], batch_size_ic)
         x_bc, t_bc, x0_bc, k0_bc = sampler.sample_boundary(subkeys[2], batch_size_bc)
 
-        # Sample t_norm from exponential distribution so norm is enforced
-        # most strongly at small t where decay begins — mean = t_max/5
+        # Use the IC batch's (x0, k0) for norm enforcement — same parameters per step
+        # so the model sees "IC amplitude → norm at t>0" as a unified constraint.
+        # Sample a random t_norm from exponential (bias toward early t where decay begins).
         t_norm_raw = jax.random.exponential(subkeys[3]) * (20.0 / 5.0)
         t_norm = jnp.clip(t_norm_raw, 0.0, 20.0)
-        x0_norm = jax.random.uniform(subkeys[3], minval=x0_range[0], maxval=x0_range[1])
-        k0_norm = jax.random.uniform(subkeys[3], minval=-3.0, maxval=3.0)
+        x0_norm = float(x0_ic[0])
+        k0_norm = float(k0_ic[0])
 
         extra_times = list(norm_late_times) if norm_late_times else [0.0, 10.0]
         loss = trainer.step(
@@ -314,8 +320,8 @@ def train_model(
             x_ic, t_ic, x0_ic, k0_ic,
             x_bc, t_bc, x0_bc, k0_bc,
             t_norm=float(t_norm),
-            x0_norm=float(x0_norm),
-            k0_norm=float(k0_norm),
+            x0_norm=x0_norm,
+            k0_norm=k0_norm,
             extra_norm_times=extra_times,
         )
 
@@ -327,10 +333,14 @@ def train_model(
             l_bc = float(loss_fn.boundary_condition_loss(current_model, x_bc, t_bc, x0_bc, k0_bc))
             x_ng = trainer.x_norm_grid
             n_ng = len(x_ng)
+            # Log norm at t=0 and t=5 for the current (x0,k0) to track late-time health
+            log_times = [0.0, 5.0]
+            x_log = jnp.concatenate([x_ng] * len(log_times))
+            t_log = jnp.concatenate([jnp.full(n_ng, t) for t in log_times])
             l_norm = float(loss_fn.normalization_loss(
                 current_model,
-                x_ng, jnp.zeros(n_ng),
-                jnp.full(n_ng, float(x0_norm)), jnp.full(n_ng, float(k0_norm)),
+                x_log, t_log,
+                jnp.full(len(x_log), x0_norm), jnp.full(len(x_log), k0_norm),
             ))
             loss_history["total"].append(float(loss))
             loss_history["physics"].append(l_phys)

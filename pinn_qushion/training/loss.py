@@ -29,12 +29,14 @@ class PINNLoss:
         lambda_ic: float = 10.0,
         lambda_bc: float = 0.0,
         lambda_norm: float = 1.0,
+        dx: float = 0.078125,
     ):
         self.sigma = sigma
         self.lambda_phys = lambda_phys
         self.lambda_ic = lambda_ic
         self.lambda_bc = lambda_bc
         self.lambda_norm = lambda_norm
+        self.dx = dx
 
     def initial_wavepacket(
         self, x: jnp.ndarray, x0: jnp.ndarray, k0: jnp.ndarray
@@ -114,17 +116,26 @@ class PINNLoss:
         t: jnp.ndarray,
         x0: jnp.ndarray,
         k0: jnp.ndarray,
-        dx: float = 0.078125,  # 20/256 grid spacing
+        n_grid: int = 256,
     ) -> jnp.ndarray:
         """Compute normalization loss - penalize deviation from unit norm.
 
-        The wavefunction should satisfy integral |Psi|^2 dx = 1 at all times.
+        x/t may contain multiple time slices stacked as (n_times * n_grid,).
+        Each slice is integrated independently to get one norm per time point.
+
+        Loss = mean over slices of [ -log(norm + eps) + norm - 1 ]
+        This is the KL-divergence barrier: minimum at norm=1 (value=0), diverges
+        to +inf as norm->0. The (norm-1)^2 form has a spurious minimum at
+        norm=(1+sqrt(3))/2 ≈ 1.366 when combined with -log(norm).
         """
         psi_r, psi_i = model.psi(x, t, x0, k0)
         prob = psi_r**2 + psi_i**2
-        # Approximate integral using trapezoidal rule
-        norm = jnp.sum(prob) * dx
-        return (norm - 1.0) ** 2
+        n_times = len(prob) // n_grid
+        prob_slices = prob.reshape(n_times, n_grid)
+        norms = jnp.sum(prob_slices, axis=1) * self.dx
+        # -log(norm) + norm - 1: minimum at norm=1 (value=0), diverges to +inf as norm->0.
+        # (norm-1)^2 alone shifts to a spurious minimum at norm=(1+sqrt(3))/2 ≈ 1.366.
+        return jnp.mean(-jnp.log(norms + 1e-8) + norms - 1.0)
 
     def total_loss(
         self,

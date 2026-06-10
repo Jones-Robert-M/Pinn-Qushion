@@ -42,17 +42,18 @@ class Trainer:
         self.opt_state = optimizer.init(eqx.filter(model, eqx.is_array))
         self.x_range = x_range
 
+        # Pre-compute normalization grid (fixed spatial grid for integration)
+        self.x_norm_grid = jnp.linspace(x_range[0], x_range[1], 256)
+        self.dx = (x_range[1] - x_range[0]) / 256
+
         self.loss_fn = PINNLoss(
             sigma=sigma,
             lambda_phys=lambda_phys,
             lambda_ic=lambda_ic,
             lambda_bc=lambda_bc,
             lambda_norm=lambda_norm,
+            dx=self.dx,
         )
-
-        # Pre-compute normalization grid (fixed spatial grid for integration)
-        self.x_norm_grid = jnp.linspace(x_range[0], x_range[1], 256)
-        self.dx = (x_range[1] - x_range[0]) / 256
 
     def compute_loss(
         self,

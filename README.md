@@ -5,7 +5,8 @@ colorTo: purple
 sdk: streamlit
 sdk_version: 1.57.0
 app_file: app.py
-pinned: false
+pinned: true
+link: https://github.com/Jones-Robert-M/pinn-qushion
 ---
 
 # Pinn-Qushion
@@ -118,17 +119,41 @@ Training is logged to `training_logs/` with per-step loss breakdowns (physics, I
 
 ## Results
 
-*Norm conservation is the current active training challenge — see the Training section for details. The qualitative results below are expected once training converges.*
+Four of five potentials have fully converged models with norm conservation within ±0.5% of 1.0 across the full t ∈ [0, 20] window. The finite square well is currently being retrained.
 
-The app presents four analysis panels alongside the wavefunction animation:
+### Norm conservation — final results
 
-**Survival probability** |C(t)| = |∫Ψ*(x,0)Ψ(x,t)dx| measures how much the evolving state overlaps with its initial configuration. For a harmonic oscillator it should show periodic recurrences at the classical period T = 2π/ω ≈ 6.28.
+| Potential | t=0 | t=2 | t=5 | t=10 | t=20 | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| Harmonic oscillator | 1.003 | 1.001 | 1.002 | 1.002 | 1.001 | ✅ PASS |
+| Infinite square well | 1.002 | 1.000 | 1.000 | 1.000 | 1.001 | ✅ PASS |
+| Double well | 0.999 | 1.000 | 1.000 | 0.999 | 1.000 | ✅ PASS |
+| Gaussian well | 0.994 | 0.998 | 1.000 | 1.000 | 1.002 | ✅ PASS |
+| Finite square well | — | — | — | — | — | 🔄 retraining |
 
-**Excitation spectrum** |FFT(C(t))| extracts the energy eigenvalues excited by the initial wavepacket. Since C(t) = Σₙ |cₙ|² e^{-iEₙt}, its Fourier transform peaks at the eigenvalues Eₙ weighted by the overlap coefficients |cₙ|². For the harmonic oscillator the analytic eigenvalues are Eₙ = ω(n + ½) = 0.5, 1.5, 2.5, ... — when training is correct, the spectrum peaks align with these values without being told them explicitly during training. Only levels with significant amplitude are annotated.
+Thresholds: t=0 ≥ 0.95, t=2/5 ≥ 0.70, t=10/20 ≥ 0.50.
 
-**Expectation values** ⟨x⟩(t) and ⟨p⟩(t) on a dual-axis plot show the mean position and mean momentum trajectories. These are computed directly from the probability density and wavefunction gradients — no additional model calls. For a harmonic oscillator, both should oscillate sinusoidally at frequency ω, 90° out of phase, tracing an ellipse in phase space (a coherent state). This is one of the most directly interpretable physics checks: if the neural network has correctly learned the harmonic oscillator, the position trajectory should look like a clean sine wave.
+### What the training challenge was
 
-**Norm conservation** ∫|Ψ|²dx should remain at 1.0 for all time. Deviation from this is the primary model quality metric and is shown explicitly so the model's current accuracy is visible to the user.
+Getting norm conservation right required three separate fixes, each uncovered after a failed training run:
+
+1. **Loss geometry** — `(norm-1)²` alone gives the trivial solution Ψ=0 a bounded cost of 1.0, making it a stable attractor. The correct form is the KL-barrier: `-log(norm+ε) + norm - 1`, which diverges to +∞ as norm→0 and has its unique minimum at norm=1 (value=0). The combination `-log(norm) + (norm-1)²` was tried and rejected — it has a spurious minimum at norm=(1+√3)/2 ≈ 1.366, which is precisely where the model converged.
+
+2. **Parameter coupling** — the IC loss and norm loss were independently sampling different (x₀, k₀) pairs each step. The model learned to conserve norm for the training distribution but not at arbitrary inference parameters. The fix: use the IC batch's (x₀, k₀) for the norm constraint each step, so the model always sees the same parameters for both constraints simultaneously.
+
+3. **Domain-aware integration** — the infinite square well uses x ∈ [-4, 4] rather than [-10, 10]. A hardcoded `dx = 20/256` in the norm loss integration caused the model to converge to the wrong amplitude (∫|Ψ|²dx ≈ 0.42 instead of 1.0). The fix: `dx` is now computed from `x_range` at trainer construction time and passed through to the loss function.
+
+### Analysis panels
+
+The app presents four panels alongside the wavefunction animation:
+
+**Survival probability** |C(t)| = |∫Ψ*(x,0)Ψ(x,t)dx| measures overlap with the initial state. For a harmonic oscillator it shows periodic recurrences at T = 2π/ω ≈ 6.28.
+
+**Excitation spectrum** |FFT(C(t))| peaks at energy eigenvalues Eₙ weighted by excitation coefficients |cₙ|². For the harmonic oscillator, analytic eigenvalues are Eₙ = ω(n + ½) = 0.5, 1.5, 2.5, ... The network was not told these values — they emerge from the learned dynamics.
+
+**Expectation values** ⟨x⟩(t) and ⟨p⟩(t) on a dual-axis plot. Computed from the probability density and wavefunction gradients without additional model calls. For a harmonic oscillator, both oscillate sinusoidally at frequency ω, 90° out of phase (coherent state).
+
+**Norm conservation** ∫|Ψ|²dx over time. Deviation from 1.0 is the primary model quality metric and is shown explicitly.
 
 ---
 
@@ -155,7 +180,35 @@ streamlit run app.py
 pytest
 ```
 
-Pre-trained weights are not stored in this repository. They are hosted on [Hugging Face](https://huggingface.co/JonesRobM/pinn-qushion-weights) and fetched automatically by the CI deploy pipeline. To run the app locally with trained models, either train from scratch or download weights manually and place them in `weights/`.
+Pre-trained model weights are hosted on Hugging Face: [JonesRobM/pinn-qushion-weights](https://huggingface.co/JonesRobM/pinn-qushion-weights).
+
+Each `.eqx` file is an Equinox model serialised with `eqx.tree_serialise_leaves`. Files are small (~263 KB each) and publicly downloadable without authentication.
+
+**Download all weights in one command:**
+
+```bash
+python scripts/download_weights.py
+```
+
+This fetches all five production weight files into `weights/` using the `huggingface_hub` library. The app and evaluation scripts will then work without further setup.
+
+**Load a single model directly:**
+
+```python
+import jax, equinox as eqx
+from huggingface_hub import hf_hub_download
+from pinn_qushion.models import PINN
+from pinn_qushion.potentials import HarmonicOscillator
+
+path = hf_hub_download("JonesRobM/pinn-qushion-weights", "harmonic.eqx", repo_type="model")
+model = eqx.tree_deserialise_leaves(
+    path, PINN(HarmonicOscillator(omega=1.0), hidden_dim=128, num_layers=5, key=jax.random.PRNGKey(0))
+)
+```
+
+The CI deploy pipeline fetches weights from this repo automatically on every push to main — the live Space always reflects the latest uploaded weights.
+
+**Note on cold starts:** The HuggingFace Space runs on a free CPU tier and sleeps after a period of inactivity. The first load after waking takes 20–40 seconds while JAX JIT-compiles the model. Subsequent interactions are fast.
 
 ---
 
