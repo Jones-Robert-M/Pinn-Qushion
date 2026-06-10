@@ -3,7 +3,7 @@ name = "pinn-qushion"
 version = "0.1.0"
 description = "PINN solver for 1D Schrödinger equation with web visualization"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [{name = "Robert Jones", email = "jonesrobm@gmail.com"}]
 dependencies = [
