@@ -6,10 +6,6 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "Robert Jones", email = "jonesrobm@gmail.com"}]
-
-[project.urls]
-Homepage = "https://github.com/Jones-Robert-M/pinn-qushion"
-
 dependencies = [
     "jax>=0.4.20",
     "equinox>=0.11.0",
@@ -20,6 +16,9 @@ dependencies = [
     "plotly>=5.18.0",
     "huggingface_hub>=0.20.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/Jones-Robert-M/pinn-qushion"
 
 [project.optional-dependencies]
 dev = [
