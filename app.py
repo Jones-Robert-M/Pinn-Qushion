@@ -128,21 +128,24 @@ def build_animation(data: dict, potential_key: str) -> go.Figure:
     V = data["V"]
 
     V_finite = V[np.isfinite(V)]
-    V_abs_max = np.max(np.abs(V_finite)) if len(V_finite) > 0 else 0.0
-    V_scale = V_abs_max if V_abs_max > 0 else 1.0
+    V_min = float(np.min(V_finite)) if len(V_finite) > 0 else 0.0
+    V_max = float(np.max(V_finite)) if len(V_finite) > 0 else 1.0
+    V_range = (V_max - V_min) if (V_max - V_min) > 0 else 1.0
     prob_max = float(np.max(prob_frames)) if np.max(prob_frames) > 0 else 1.0
 
-    # Scale V to occupy the top 25% of the plot as a subtle background shape.
-    # Clip at zero so it never goes negative — avoids visual overlap with the wavefunction.
-    V_display = np.clip(V / V_scale * prob_max * 0.25, 0.0, prob_max * 0.25)
+    # Scale V to fit within [-band, +band] centred at a baseline offset.
+    # Wells (negative V) dip downward; barriers rise upward. Baseline at 25% of prob axis.
+    band = prob_max * 0.30
+    baseline = prob_max * 0.25
+    V_display = baseline + (V - V_min) / V_range * 2 * band - band
 
     frames = []
     for i, t in enumerate(t_points):
         frames.append(go.Frame(
             data=[
                 go.Scatter(x=x, y=V_display, mode="lines",
-                           line=dict(color="rgba(120,120,120,0.4)", width=1),
-                           fill="tozeroy", fillcolor="rgba(120,120,120,0.07)",
+                           line=dict(color="rgba(200,160,80,0.9)", width=1.5),
+                           fill="tozeroy", fillcolor="rgba(200,160,80,0.67)",
                            showlegend=False),
                 go.Scatter(x=x, y=prob_frames[i], mode="lines",
                            line=dict(color="#4C9BE8", width=2.5),
@@ -174,8 +177,8 @@ def build_animation(data: dict, potential_key: str) -> go.Figure:
     fig = go.Figure(
         data=[
             go.Scatter(x=x, y=V_display, mode="lines",
-                       line=dict(color="rgba(120,120,120,0.4)", width=1),
-                       fill="tozeroy", fillcolor="rgba(120,120,120,0.07)",
+                       line=dict(color="rgba(200,160,80,0.9)", width=1.5),
+                       fill="tozeroy", fillcolor="rgba(200,160,80,0.67)",
                        name="V(x)"),
             go.Scatter(x=x, y=prob_frames[0], mode="lines",
                        line=dict(color="#4C9BE8", width=2.5),
@@ -188,7 +191,7 @@ def build_animation(data: dict, potential_key: str) -> go.Figure:
     fig.update_layout(
         xaxis_title="Position x",
         yaxis_title="Probability density",
-        yaxis_range=[0, prob_max * 1.35],
+        yaxis_range=[-(band * 0.15), prob_max * 1.35],
         height=420,
         margin=dict(l=60, r=30, t=40, b=80),
         legend=dict(
@@ -411,7 +414,7 @@ weighted by how strongly the initial wavepacket overlaps with each eigenstate.
 Orange lines mark analytic eigenvalues only where the measured amplitude is
 significant — levels that are not appreciably excited are not labelled.
 
-**Expectation values** $\langle x \rangle(t)$ and $\langle p \rangle(t)$
+**Expectation values** ⟨x⟩(t) and ⟨p⟩(t)
 $$\langle x \rangle = \int x\,|\Psi|^2\,dx \qquad
 \langle p \rangle = \int \Psi^* \!\left(-i\frac{\partial}{\partial x}\right)\!\Psi\,dx$$
 Mean position (blue, left axis) and mean momentum (orange, right axis). For a
